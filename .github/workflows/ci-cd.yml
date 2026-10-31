@@ -1,0 +1,111 @@
+name: CI-CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: pf-devops-web
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package.json
+      - name: Instalar dependencias
+        working-directory: app
+        run: npm install
+      - name: Ejecutar pruebas
+        working-directory: app
+        run: npm test
+
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+      - uses: github/codeql-action/analyze@v3
+
+  build-and-push:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, sast]
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar credenciales AWS por OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Definir imagen inmutable
+        id: meta
+        run: echo "image=${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: docker build -t "${{ steps.meta.outputs.image }}" ./app
+      - name: Escaneo de imagen con Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image }}
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+      - name: Push a ECR
+        run: docker push "${{ steps.meta.outputs.image }}"
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configurar AWS por OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Obtener kubeconfig
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name pf-devops
+      - name: Instalar AWS Load Balancer Controller
+        run: echo "Instalar el controller siguiendo la guia oficial de AWS antes de aplicar Ingress"
+      - name: Desplegar
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          sed "s|IMAGE_PLACEHOLDER|$IMAGE|g" k8s/deployment.yaml | kubectl apply -f -
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/hpa.yaml
+          kubectl rollout status deployment/web -n pf-devops --timeout=180s
+
+  dast:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: OWASP ZAP baseline (configurar TARGET_URL como variable del entorno test)
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: ${{ vars.TARGET_URL }}
+          fail_action: false

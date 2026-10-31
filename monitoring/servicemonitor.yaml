@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: web
+  namespace: pf-devops
+  labels:
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: web
+  namespaceSelector:
+    matchNames: ["pf-devops"]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s

@@ -1,0 +1,10 @@
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    retention: 7d
+grafana:
+  adminPassword: "CAMBIAR_POR_SECRET"
+  persistence:
+    enabled: false
+alertmanager:
+  enabled: true

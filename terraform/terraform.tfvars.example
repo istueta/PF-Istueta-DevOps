@@ -1,0 +1,7 @@
+aws_region          = "us-east-1"
+project_name        = "pf-devops"
+cluster_version     = "1.31"
+desired_size        = 1
+min_size            = 1
+max_size            = 2
+node_instance_types = ["t3.medium"]
