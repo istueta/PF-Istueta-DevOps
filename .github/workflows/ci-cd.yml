@@ -105,7 +105,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: OWASP ZAP baseline (configurar TARGET_URL como variable del entorno test)
-        uses: zaproxy/action-baseline@v0.14.0
+        uses: zaproxy/action-baseline@v0.15.0
         with:
           target: ${{ vars.TARGET_URL }}
           fail_action: false
